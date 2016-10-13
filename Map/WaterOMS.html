@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<Title>Water Outage Application</Title>
+	<meta name="description" content="Application for maintaining water outage information" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+	<link rel="stylesheet" href="https://js.arcgis.com/3.17/dijit/themes/claro/claro.css" />
+	<link rel="stylesheet" href="https://js.arcgis.com/3.17/esri/css/esri.css" />
+	<link rel="stylesheet" type="text/css" href="WaterOMSStyle.css" media="screen" />
+	<script>
+		var package_path = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+        var dojoConfig = {
+            // enable loading the api from a CDN and loading of local modules from internal server.
+            packages: [{
+                name: "application",
+                location: package_path + '/js'
+            }],
+			parseOnLoad: false,
+			async: true
+        };
+	</script>
+	<script src="https://js.arcgis.com/3.17/"></script>
+	<script>
+		//notice esri 3.17 use deprecated json module! 
+		require(["dojo/parser", "dijit/registry", "dojo/dom", "dojo/dom-class", "dojo/query", "dojo/_base/lang", "dojo/_base/fx", "dojo/dom-style",
+			"dojo/on", "dojo/Deferred", "dojo/_base/declare", "dojo/Stateful", "dojo/request", "dojo/_base/json",
+			"esri/map", "esri/geometry/Circle", "esri/symbols/SimpleFillSymbol", "esri/symbols/SimpleLineSymbol", "esri/graphic", "esri/layers/GraphicsLayer", "esri/Color",
+			"esri/layers/FeatureLayer", "esri/tasks/query", "esri/tasks/QueryTask", "esri/dijit/Search", "esri/geometry/Extent",
+			"dijit/form/HorizontalSlider", "dijit/form/HorizontalRuleLabels", "dijit/form/HorizontalRule", "dijit/form/DateTextBox", "dijit/form/TimeTextBox",
+			"dijit/form/NumberSpinner", "dijit/form/Select", "application/ValidationTextArea", "dijit/form/TextBox", "dijit/form/SimpleTextarea",
+			"dijit/form/Form", "dijit/layout/BorderContainer", "dijit/layout/TabContainer", "dijit/layout/ContentPane", "dojo/domReady!"], 
+		function(parser, registry, dom, domClass, dojoQuery, lang, fx, style, on, Deferred, declare, Stateful, request, DojoJson,
+			Map, Circle, SimpleFillSymbol, SimpleLineSymbol, Graphic, GraphicsLayer, Color,
+			FeatureLayer, Query, QueryTask, Search, Extent){
+			//set up overlay control
+			var OverlayCtrl = declare(null,{
+				overlayNode:null,
+				// store a reference to the overlay node
+				constructor:function(){
+					this.overlayNode = dom.byId('loadingOverlay');
+					
+				},
+				// called to hide the loading overlay
+				endLoading: function()
+				{
+					// fade the overlay gracefully
+					fx.fadeOut({
+						node: this.overlayNode,
+						onEnd: function(node){
+							style.set(node, 'display', 'none');
+						}
+					}).play();
+				}
+			});
+			var overlay = new OverlayCtrl();
+			parser.parse();
+			overlay.endLoading();
+			var appGraphicsClass = declare([Stateful], {currentGraphic: null});
+			var appGraphics = new appGraphicsClass();
+			appGraphics.watch("currentGraphic", function(name, oldGraphic, newGraphic){
+				if (!newGraphic){
+					submitButton.setAttribute("disabled", true);	
+				} else {
+					if (entryForm.isValid()){submitButton.setAttribute("disabled", false);}
+				}
+			});
+			function mapClear(){
+				mapClickHandler.remove();
+				outageGL.clear();
+				appGraphics.set("currentGraphic", null);
+			}
+			var leftTabContainer = registry.byId("leftTabContainer")
+			leftTabContainer.watch("selectedChildWidget", function(name, oldPane, newPane){
+				switch (oldPane.id){
+					case "incidentEntry":
+						mapClear();
+						break
+					case "incidentUpdate":
+						mapClear();
+						emptyModel(incidentAttributesInfo, emptyAttributesInfo);
+						break
+				} 
+				switch (newPane.id){
+					case "incidentEntry":
+						mapClickHandler = enableMarkOutage();
+						break
+					case "incidentUpdate":
+						updateAction.attr("value", "Yes");
+						mapClickHandler = enableQueryOutage();
+						break
+				}
+			});
+			//entry Form Section
+			var incidentAttributes = {};
+			incidentAttributes.incidentRadius = 0.2;
+			incidentAttributes.incidentTime = new Date();
+			incidentAttributes.estimateDowntime = 2.00;
+			incidentAttributes.recipientList = "Long List";
+			incidentAttributes.incidentDescription = "";
+			incidentAttributes.incidentResolution = "No";
+			var entryForm = registry.byId("entryForm"); 
+			entryForm.watch("state", function(name, oldState, newState){
+				if (newState == "Error"){
+					submitButton.setAttribute("disabled", true);
+				} else if (newState == "Incomplete"){
+					submitButton.setAttribute("disabled", true);
+				} else {
+					submitButton.setAttribute("disabled", !appGraphics.currentGraphic);
+				}
+			});
+			function fadeMessage(domID){
+				style.set(domID, "opacity", "1");
+				var fadeArgs = {
+					node: domID,
+					duration: 5000,
+				};
+				fx.fadeOut(fadeArgs).play();
+			}
+			function sendMail(attributesObject, messageDomId){
+				var myJson = DojoJson.toJson(attributesObject);
+				var responseMessage = dom.byId(messageDomId);
+				var url = "http://<your host>/GISMap/cgi-bin/JsonSendEmail.py";
+				request.post(url, {
+					data: myJson,
+					handleAs: "json",
+					timeout: 5000
+				}).then(function(result){
+						if (result.success == "Yes"){domClass.remove(responseMessage, "ErrorMsg");}
+						else {domClass.add(responseMessage, "ErrorMsg");}
+						responseMessage.innerHTML = "<p><strong>Success:</strong> " + result.success + "<br>" +
+													"<strong>Message:</strong> " + result.message + "</p>";
+						fadeMessage(messageDomId);
+					}, function(error){
+						responseMessage.innerHTML = "<code>" + DojoJson.toJson(error) + "</code>";
+						fadeMessage(messageDomId);
+					});
+			
+			}
+			//stop form refresh on submit click and do ajax post
+			on(entryForm, 'submit', function(evt){
+				evt.preventDefault(); 
+				evt.stopPropagation();
+				sendMail(incidentAttributes, "entryResponseMessage");
+			});
+			var incidentDateBox = registry.byId("incidentDateBox");
+			var incidentTimeBox = registry.byId("incidentTimeBox");
+			var estimateDowntime = registry.byId("estimateDowntime");
+			on(estimateDowntime, 'Change', function(){
+				incidentAttributes.estimateDowntime = this.value;
+			});
+			var recipientList = registry.byId("recipientList");
+			on(recipientList, 'Change', function(){
+				incidentAttributes.recipientList = this.value;
+			});
+			var incidentDescription = registry.byId("incidentDescription");
+			on(incidentDescription, 'Change', function(){
+				incidentAttributes.incidentDescription = this.value;
+			});
+			var radiusSlider = registry.byId("radiusSlider");
+			on(radiusSlider, 'Change', function(){
+				incidentAttributes.incidentRadius = this.value;
+			});
+			var submitButton = registry.byId("submitButton");
+			on(submitButton, 'click', function(){
+				if (appGraphics.currentGraphic != null & waterOutageLayer.loaded){
+					//do some formatting so esri Js api is happy with the attributes.
+					var esriAttributes = {};
+					Object.keys(incidentAttributes).forEach(function(key){
+						if (incidentAttributes[key] instanceof Date){
+							//esri rest accept date in ticks only, also timezone information will be lost
+							esriAttributes[key] = incidentAttributes[key].getTime() - incidentAttributes[key].getTimezoneOffset()*60*1000;
+							}
+						else {
+							esriAttributes[key] = incidentAttributes[key];
+							}
+						});
+					appGraphics.currentGraphic.setAttributes(esriAttributes);
+					waterOutageLayer.applyEdits([appGraphics.currentGraphic],null,null, function(addResults,updateResults,deleteResults) {  
+						//console.log("Object added; ObjectId = " + addResults[0].objectId);
+						waterOutageLayer.refresh();
+						outageGL.remove(appGraphics.currentGraphic);
+						appGraphics.set("currentGraphic", null);
+						incidentDescription.set("value","");
+						},function(error){  
+						console.log("Error at ApplyEdit in ESRI js API");  
+					});  
+				}
+			});
+			function initDateTimeBoxs(){
+				var deferred = new Deferred();
+				incidentDateBox.set('value', incidentAttributes.incidentTime);
+				incidentTimeBox.set('value', incidentAttributes.incidentTime);
+				var interval = setTimeout(function(){
+					if (incidentDateBox.get('value') & incidentTimeBox.get('value')){
+					clearInterval(interval);
+					deferred.resolve("success");
+					}
+				}, 100);
+				return deferred.promise;
+				}
+			initDateTimeBoxs().then(function(){
+				on(incidentDateBox, 'Change', function(){
+					if (this.value === null){this.value = new Date(0);} //if user blank out date and navigate away
+					incidentAttributes.incidentTime = this.value;
+					var incidentHourMinute = incidentTimeBox.get("value");
+					incidentAttributes.incidentTime.setHours(incidentHourMinute.getHours());
+					incidentAttributes.incidentTime.setMinutes(incidentHourMinute.getMinutes());
+					});
+				on(incidentTimeBox, 'Change', function(){
+					if (this.value === null){this.value = new Date(0);}
+					var incidentHourMinute = [this.value.getHours(), this.value.getMinutes()];
+					incidentAttributes.incidentTime.setHours(incidentHourMinute[0]);
+					incidentAttributes.incidentTime.setMinutes(incidentHourMinute[1]);
+					});
+			});
+			var map = new Map("map", {
+				basemap: "osm",  //For full list of pre-defined basemaps, navigate to http://arcg.is/1JVo6Wd
+				center: [-118.15, 34.15], // longitude, latitude
+				zoom: 15
+			});
+			//disable map doubleclick zoom and enable outage marking
+			//setup identifytask 
+			var queryTask, query;
+			map.on("load", function(){
+				map.disableDoubleClickZoom();
+				mapClickHandler = enableMarkOutage();
+				setupQueryTask();
+			});
+			//add outage feature layer
+			var waterOutageLayer = new FeatureLayer("http://svrwp-gis-sw-d/arcgis/rest/services/water/WaterOutage/FeatureServer/0", {
+				mode: FeatureLayer.MODE_SNAPSHOT,
+				outFields: ["*"]
+				});
+			map.addLayers([waterOutageLayer]);
+			//var outageSymbol = new SimpleFillSymbol().setColor(null).outline.setColor("blue");
+			var outageSymbol = new SimpleFillSymbol(SimpleFillSymbol.STYLE_SOLID,
+				new SimpleLineSymbol(SimpleLineSymbol.STYLE_DASH,
+				new Color([255,0,0]), 2),new Color([255,255,0,0.25]));
+			var outageGL = new GraphicsLayer({ id: "outageGL" });
+			var radiusSlider = registry.byId("radiusSlider");
+			map.addLayer(outageGL);
+			function enableMarkOutage(){
+				var mapClickHandler = map.on("click", function(evt) {  
+					var radius = radiusSlider.get("value"); //dom.byId("Radius").options[dom.byId("Radius").selectedIndex].value;  
+					var circle = new Circle({  
+						center: evt.mapPoint,  
+						geodesic: true,  
+						radius: radius,  
+						radiusUnit: "esriMiles"
+					});  
+					var graphic = new Graphic(circle, outageSymbol);  
+					if (appGraphics.currentGraphic != null){
+					outageGL.remove(appGraphics.currentGraphic);
+					}
+					outageGL.add(graphic);
+					appGraphics.set("currentGraphic", graphic);	
+					});
+				return mapClickHandler;
+			}
+			//set up identify task 
+			function setupQueryTask(){
+				queryTask = new QueryTask("http://svrwp-gis-sw-d/arcgis/rest/services/water/WaterOutage/MapServer/0");
+				query = new Query();
+				query.spatialrelationship = Query.SPATIAL_REL_INTERSECTS;
+				query.outFields = ["*"];
+				query.returnGeometry = true;
+				}
+			function enableQueryOutage(){
+				var mapClickHandler = map.on("click", function(evt){
+					//clear previous selection when clicking anywhere on map
+					if (selectedFeature != null){
+						outageGL.remove(selectedFeature);
+					}
+					query.geometry = evt.mapPoint;
+					queryTask.execute(query, processQueryResult);
+				});
+				return mapClickHandler;
+			}
+			//type of selectedFeature is graphic
+			var selectedFeature = null;
+			function processQueryResult(featureSet){
+				features = featureSet.features;
+				if (typeof features[0] !== 'undefined' && features[0] !== null) {
+					selectedFeature=features[0];
+					selectedFeature.setSymbol(outageSymbol);
+					outageGL.add(selectedFeature);
+					var d = new Date();
+					var d = new Date((selectedFeature.attributes.incidentTime + d.getTimezoneOffset()*60*1000));
+					//keep the selected feature attribute intact so we can call applyEdit update with it 
+					var selectedAttributes = lang.clone(selectedFeature.attributes);
+					selectedAttributes.incidentTime = d;
+					for (var propName in emptyAttributesInfo){
+						//do not wipe out incidentResolution choice with what is retrived via Rest endpoint
+						if (propName !== "incidentResolution"){
+							incidentAttributesInfo.set(propName, selectedAttributes[propName]);
+						}
+					}
+				}
+				//if click outside of any outage graphic empty out model
+				else {
+					emptyModel(incidentAttributesInfo, emptyAttributesInfo);
+				}
+			}
+			function emptyModel(model, modelParams){
+				for (var propName in modelParams){
+						model.set(propName, modelParams[propName]);
+				}
+			}
+			var emptyAttributesInfo = {OBJECTID: null, incidentTime: null, estimateDowntime: null, recipientList: null, incidentDescription: null, incidentResolution: "Yes", incidentRadius: null};
+			var incidentAttributesInfo = new Stateful(emptyAttributesInfo);
+			var updateButton = registry.byId("updateButton");
+			function bindObjectForm(object, form){
+				// copy initial values into form inputs
+				for (var item in object){
+					updateInput(item, null, object.get(item));
+				}
+				// watch for any future changes in the object
+				object.watch(updateInput);
+				function updateInput(name, oldValue, newValue){
+					var field = dojoQuery("*[name=" + name + "]", form)[0];
+					if (field){
+						if (field.name == "incidentTime" && newValue){
+						var dFormat = [newValue.getMonth()+1, newValue.getDate(), newValue.getFullYear()].join('/')+' '+ [newValue.getHours(), newValue.getMinutes()].join(':');
+						field.value = dFormat;
+						}
+						//disable/enable update button; every record in esri Db has object id  
+						else if (field.name =="OBJECTID"){
+							updateButton.set("disabled", !newValue);
+							field.value = newValue;
+						}
+					else {field.value = newValue;}
+					}
+				}
+			}
+			var updateAction = registry.byId("updateAction");
+			on(updateAction, 'Change', function(){
+				incidentAttributesInfo.incidentResolution = this.value;
+			});
+			bindObjectForm(incidentAttributesInfo, dom.byId("updateForm"));
+			on(updateButton, 'click', function(){
+				if (selectedFeature != null & waterOutageLayer.loaded){
+					//do some formatting so esri Js api is happy with the attributes.
+					if (updateAction.value == "Delete"){
+					waterOutageLayer.applyEdits(null, null, [selectedFeature], function(addResults,updateResults,deleteResults) {  
+						//console.log("Object deleted; ObjectId = " + deleteResults);
+						outageGL.remove(selectedFeature);
+						waterOutageLayer.refresh();
+						selectedFeature = null;
+						},function(error){  
+						console.log("Error at ApplyEdit in ESRI js API");}
+						);}
+					if (updateAction.value == "Yes"){
+					selectedFeature.attributes.incidentResolution = "Yes";
+					waterOutageLayer.applyEdits(null, [selectedFeature], null, function(addResults,updateResults,deleteResults) {  
+						//console.log("Object Updated; ObjectId = " + updateResults[0].objectId);
+						outageGL.remove(selectedFeature);
+						waterOutageLayer.refresh();
+						selectedFeature = null;
+						},function(error){  
+						console.log("Error at ApplyEdit in ESRI js API");}
+						);}
+					}
+				});
+			var updateForm = registry.byId("updateForm");
+			on(updateForm, 'submit', function(evt){
+				evt.preventDefault(); 
+				evt.stopPropagation();
+				sendMail(incidentAttributesInfo, "updateResponseMessage");
+			});
+			//add search widget and restrict search to pasadena
+			var extent = new Extent({
+				"xmin":-118.225,"ymin":34.043,"xmax":-117.922,"ymax":34.210,
+				"spatialsReference":{"wkid":4326}
+			});
+			var search = new Search({
+				map: map,
+				showInfoWindowOnSelect: false,
+				enableInfoWindow: false
+				}, "search");
+			search.sources[0].searchExtent = extent;
+			search.startup();
+			
+		});
+	</script>	
+</head>
+<body class="claro">
+<div id="loadingOverlay" class="loadingOverlay pageOverlay">
+	<div class="loadingMessage">Loading...</div>
+</div>
+<div id="appLayout" class="headlineLayout" data-dojo-type="dijit/layout/BorderContainer" data-dojo-props="design: 'headline'">
+	<div class="edgePanel" data-dojo-type="dijit/layout/ContentPane" data-dojo-props="region: 'top'">Pasadena Water and Power, Water Outage Application</div>
+	<div  id="leftTabContainer" class="edgePanel" data-dojo-type="dijit/layout/TabContainer" data-dojo-props="region: 'left', tabPosition: 'top', splitter: true">
+		<div id="incidentEntry" data-dojo-type="dijit/layout/ContentPane" title="Entry" selected="true">
+			<h4>Incident Entry Form</h4>
+			<div data-dojo-type="dijit/form/Form" id="entryForm" data-dojo-id="entryForm" encType="multipart/form-data" action="" method="get">
+			<table class="incidentFields">
+				<tr>
+					<td><label for="radiusSlider">Incident Radius</label></td>
+					<td><div id="radiusSliderGroup" style="width: 200px;">
+						<ol data-dojo-type="dijit/form/HorizontalRuleLabels"
+							data-dojo-props="
+								container: 'topDecoration',
+								count: 5,"
+								style="height:1.2em;font-size:75%;color:gray;font-weight:bold">
+								<li></li>
+								<li>0.2mi</li>
+								<li>0.3mi</li>
+								<li>0.4mi</li>
+								<li></li>
+						</ol>
+						<div data-dojo-type="dijit/form/HorizontalRule"
+							data-dojo-props="
+								container: 'topDecoration',
+								count: 5"
+							style="height: 5px; margin: 0 12px;"></div>
+						<!-- declaratively create a slider-->
+						<input id="radiusSlider" type="range" value="0.2"
+							data-dojo-type="dijit/form/HorizontalSlider"
+							data-dojo-props="
+								value: 0.2,
+								minimum: 0.1,
+								maximum: 0.5,
+								showButtons: true,
+								discreteValues: 5">
+					</div></td>
+				</tr>
+				<tr>
+					<td><label for="incidentDateBox">Incident Date:</label></td>
+					<td><input type="text" name="incidentDateBox" id="incidentDateBox"
+						data-dojo-type="dijit/form/DateTextBox"
+						required="true" />
+					</td>
+				</tr>
+				<tr>
+					<td><label for="incidentTimeBox">Incident Time:</label></td>
+					<td><input type="text" name="incidentTimeBox" id="incidentTimeBox"
+						data-dojo-type="dijit/form/TimeTextBox"
+						dojo-data-props="timePattern: 'HH:mm'"
+						required="true" />
+					</td>
+				</tr>
+				<tr>
+					<td><label for="estimateDowntime">Downtime (hr):</label></td>
+					<td><input type="text" name="estimateDowntime" id="estimateDowntime" style="width: 8em;" value="2"
+						data-dojo-type="dijit/form/NumberSpinner"
+						data-dojo-props="constraints:{min:0,max:168,places:1}, 
+							invalidMessage:'Please enter a numeric value.',
+							rangeMessage:'Please enter a value between 0 and 168.',
+							smallDelta:0.5,
+							intermediateChanges:true"
+						required="true"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="recipientList">Recipient List:</label></td>
+					<td><select name="recipientList" id="recipientList" style="width: 8em;" data-dojo-type="dijit/form/Select">
+							<option value="Short List">Short List</option>
+							<option value="Long List" selected="selected">Long List</option>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="incidentDescription">Description:</label></td>
+					<td><textarea name="incidentDescription" id="incidentDescription" data-dojo-type="application/ValidationTextArea" 
+						data-dojo-props="regExp:'[\\w\\-\\s]+', invalidMessage:'select statement is not allowed.',
+							missingMessage:'Please Enter Description', 
+							value:'Enter Description'" rows=8 cols=26 style="width:auto;" required="true"></textarea>
+				</tr>
+			</table>
+			<P></P>
+			<button data-dojo-type="dijit/form/Button" type="submit" id="submitButton" name="submitButton" value="Submit">Submit</button>
+			</div>
+			<P></p><P></P>
+			<div class="responseMessage" id="entryResponseMessage"></div>
+		</div>
+		<div id="incidentUpdate" data-dojo-type="dijit/layout/ContentPane" title="Update">
+			<h4>Incident Update Form</h4>
+			<div data-dojo-type="dijit/form/Form" id="updateForm" data-dojo-id="updateForm" encType="multipart/form-data" action="" method="get">
+			<table class="updateFields">
+				<tr>
+					<td><label for="updateAction">Update Action:</label></td>
+					<td><select name="updateAction" id="updateAction" style="width: 12em;" data-dojo-type="dijit/form/Select">
+							<option value="Yes" selected="selected">RESOLVE</option>
+							<option value="Delete">DELETE</option>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="OIDInfo">Object ID:</label></td>
+					<td><input type="text" name="OBJECTID" id="OIDInfo"
+						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="incidentTimeInfo">Incident Time:</label></td>
+					<td><input type="text" name="incidentTime" id="incidentTimeInfo"
+						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="estimateDowntimeInfo">Estimate Downtime (hr):</label></td>
+					<td><input type="text" name="estimateDowntime" id="estimateDowntimeInfo"
+						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="recipientListInfo">Recipient List:</label></td>
+					<td><input type="text" name="recipientList" id="recipientListInfo"
+						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="incidentDescriptionInfo">Description:</label></td>
+					<td><textarea name="incidentDescription" id="incidentDescriptionInfo" data-dojo-type="dijit/form/SimpleTextarea" 
+						readOnly="readOnly" rows=8 cols=26 style="width:auto;"></textarea>
+				</tr>
+			</table>
+			<P></P>
+			<button data-dojo-type="dijit/form/Button" type="submit" id="updateButton" name="updateButton" value="Update">Submit</button>
+			</div>
+			<P></p><P></P>
+			<div class="responseMessage" id="updateResponseMessage"></div>
+		</div>		
+		<div id="incidentSummary" data-dojo-type="dijit/layout/ContentPane" title="Summary">
+			<h4>Phase II Implement with Dgrid If Needed</h4>
+		</div>
+		<div  id="appCredit" data-dojo-type="dijit/layout/ContentPane" title="Credits">
+			<P></P><P></P>
+			<address>
+				Written by <a href="mailto:taoli@cityofpasadena.net">Tao Li</a>.<br>
+				ITSA II<br>
+				Pasadena Water and Power<br>
+			</address>
+		</div>
+	</div>
+	<div id="mapPanel" class="centerPanel" data-dojo-type="dijit/layout/ContentPane" data-dojo-props="region: 'center', splitter: false">
+		<div id="map"></div>
+		<div id="search"></div>
+	</div>
+</div>
+</body>
+</html>

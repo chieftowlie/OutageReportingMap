@@ -1,0 +1,164 @@
+* {
+	outline: none !important;
+}
+
+body {
+	margin: 0;
+	padding: 2em;
+	font-family: Lucida Sans,Lucida Grande,Arial !important;
+	font-size: 13px !important;
+	background: white;
+	color: #333;
+}
+
+button {
+	-webkit-transition: background-color 0.2s linear;
+	border-radius:4px;
+	-moz-border-radius: 4px 4px 4px 4px;
+	-moz-box-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+	background-color: #E4F2FF;
+	background-image: url("//ajax.googleapis.com/ajax/libs/dojo/1.7.4/dijit/themes/claro/form/images/button.png");
+	background-position: center top;
+	background-repeat: repeat-x;
+	border: 1px solid #769DC0;
+	padding: 2px 8px 4px;
+	font-size:1em;
+}
+
+button:hover {
+	background-color: #AFD9FF;
+	color: #000000;
+}
+
+h1 {
+	font-size:1.5em;
+}
+
+.break
+{
+	float:none;
+	clear:both;
+}
+
+html, body {
+	height: 100%;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	overflow:hidden;
+}
+
+#appLayout {
+    height: 100%;
+}
+
+#leftTabContainer {
+    width: 36em;
+}
+
+.claro .headlineLayout .edgePanel {
+    /*background-color: #d0e9fc;*/
+	background-color: #207ce5;
+}
+
+.claro .headlineLayout .edgePanel.dijitAlignTop {
+	background: rgba(32,124,229,1);
+	background: -moz-linear-gradient(45deg, rgba(32,124,229,1) 0%, rgba(73,155,234,1) 100%);
+	background: -webkit-gradient(left bottom, right top, color-stop(0%, rgba(32,124,229,1)), color-stop(100%, rgba(73,155,234,1)));
+	background: -webkit-linear-gradient(45deg, rgba(32,124,229,1) 0%, rgba(73,155,234,1) 100%);
+	background: -o-linear-gradient(45deg, rgba(32,124,229,1) 0%, rgba(73,155,234,1) 100%);
+	background: -ms-linear-gradient(45deg, rgba(32,124,229,1) 0%, rgba(73,155,234,1) 100%);
+	background: linear-gradient(45deg, rgba(32,124,229,1) 0%, rgba(73,155,234,1) 100%);
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#207ce5', endColorstr='#499bea', GradientType=1 );
+	/*color: #FFF824;*/
+	font-family: 'courier new';
+	font-style: normal;
+	font-weight: bold;
+	font-size: 16px;
+	text-align: left;
+	color: white;
+    text-shadow: 2px 2px 4px #000000;
+}
+
+/*this is not used for now!
+.claro .headlineLayout .edgePanel .incidentField{
+    margin-top: 0px;
+}
+*/
+.dijitNumberTextBox input.dijitInputInner, .dijitCurrencyTextBox input.dijitInputInner, .dijitSpinner input.dijitInputInner {
+	text-align: left;
+}
+
+.dijitValidationTextAreaError, .dijitValidationTextAreaError.dijitTextBoxHover {
+	background-image: url("https://dojotoolkit.org/scripts/dojo/dijit/themes/claro/form/images/error.png");
+	background-position: right;
+	background-repeat: no-repeat;
+}
+
+table.incidentFields, table.updateFields {
+	border-spacing: 10px 8px;
+	border-collapse: separate;
+}
+
+table.incidentFields  label, table.updateFields  label {
+	font-weight: bold;
+	white-space: nowrap;
+	padding-right: 6px;
+}
+
+table.incidentFields  tr td:first-of-type, table.updateFields  tr td:first-of-type {
+	vertical-align: top;
+}
+
+.claro .headlineLayout .centerPanel {
+	padding: 0;
+}
+
+.dijitReadOnly {
+    background-image: url("http://3.bp.blogspot.com/-E2xwbhjpqdM/UPgHZ76O_uI/AAAAAAAABIY/oHHLzXo7ihM/s1600/document-encrypt-3.png");
+    background-position: right center;
+    background-repeat: no-repeat; 
+    background-size: 20px auto; 
+}
+
+#map {
+	padding: 0;
+	margin: 0;
+	height: 100%;
+}
+
+#search {
+	display: block;
+	position: absolute;
+	z-index: 2;
+	top: 20px;
+	left: 74px;
+}
+
+div.responseMessage {
+	color: DodgerBlue;
+	text-align: center;
+}
+
+div.responseMessage.ErrorMsg {
+	color: OrangeRed;
+}
+
+.pageOverlay {
+    top: 0;
+    left: 0;
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    z-index: 1001;
+    display: block;
+}
+
+#loadingOverlay {
+    background:  #fff url('//ajax.googleapis.com/ajax/libs/dojo/1.10.4/dijit/themes/claro/images/loadingAnimation.gif') no-repeat 10px 23px;
+}
+
+.loadingMessage {
+    padding: 25px 40px;
+    color: #999;
+}
