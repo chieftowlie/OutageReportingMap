@@ -34,7 +34,7 @@
 		function(parser, registry, dom, domClass, dojoQuery, lang, fx, style, on, Deferred, declare, Stateful, request, DojoJson,
 			Map, Circle, SimpleFillSymbol, SimpleLineSymbol, Graphic, GraphicsLayer, Color,
 			FeatureLayer, Query, QueryTask, Search, Extent){
-			//set up overlay control
+			//set up overlay control and hide elements rendering
 			var OverlayCtrl = declare(null,{
 				overlayNode:null,
 				// store a reference to the overlay node
@@ -98,6 +98,7 @@
 			incidentAttributes.incidentTime = new Date();
 			incidentAttributes.estimateDowntime = 2.00;
 			incidentAttributes.recipientList = "Long List";
+			incidentAttributes.editorLogin = ""
 			incidentAttributes.incidentDescription = "";
 			incidentAttributes.incidentResolution = "No";
 			var entryForm = registry.byId("entryForm"); 
@@ -110,6 +111,23 @@
 					submitButton.setAttribute("disabled", !appGraphics.currentGraphic);
 				}
 			});
+			function populateLogin(Attributes, loginDomId){
+				var login = registry.byId(loginDomId);
+				var url = "http://<your server>/GISMap/cgi-bin/getNTLogin.py";
+				request.get(url, {
+					handleAs: "json",
+					timeout: 5000
+				}).then(function(result){
+						login.set("value", result.remote_user);
+						Attributes.editorLogin = result.remote_user;
+					}, function(error){
+						var errorText = "unknown due to Ajax Error";
+						login.set("value", errorText);
+						Attributes.editorLogin = errorText;
+					});
+			}
+			populateLogin(incidentAttributes, "editorLogin");
+			//console.log(incidentAttributes);
 			function fadeMessage(domID){
 				style.set(domID, "opacity", "1");
 				var fadeArgs = {
@@ -121,7 +139,7 @@
 			function sendMail(attributesObject, messageDomId){
 				var myJson = DojoJson.toJson(attributesObject);
 				var responseMessage = dom.byId(messageDomId);
-				var url = "http://<your host>/GISMap/cgi-bin/JsonSendEmail.py";
+				var url = "http://<your server>/GISMap/cgi-bin/JsonSendEmail.py";
 				request.post(url, {
 					data: myJson,
 					handleAs: "json",
@@ -229,7 +247,7 @@
 				setupQueryTask();
 			});
 			//add outage feature layer
-			var waterOutageLayer = new FeatureLayer("http://svrwp-gis-sw-d/arcgis/rest/services/water/WaterOutage/FeatureServer/0", {
+			var waterOutageLayer = new FeatureLayer("http://<your server>/arcgis/rest/services/water/WaterOutage/FeatureServer/0", {
 				mode: FeatureLayer.MODE_SNAPSHOT,
 				outFields: ["*"]
 				});
@@ -261,7 +279,7 @@
 			}
 			//set up identify task 
 			function setupQueryTask(){
-				queryTask = new QueryTask("http://svrwp-gis-sw-d/arcgis/rest/services/water/WaterOutage/MapServer/0");
+				queryTask = new QueryTask("http://<your server>/arcgis/rest/services/water/WaterOutage/MapServer/0");
 				query = new Query();
 				query.spatialrelationship = Query.SPATIAL_REL_INTERSECTS;
 				query.outFields = ["*"];
@@ -308,7 +326,7 @@
 						model.set(propName, modelParams[propName]);
 				}
 			}
-			var emptyAttributesInfo = {OBJECTID: null, incidentTime: null, estimateDowntime: null, recipientList: null, incidentDescription: null, incidentResolution: "Yes", incidentRadius: null};
+			var emptyAttributesInfo = {OBJECTID: null, incidentTime: null, estimateDowntime: null, recipientList: null, editorLogin: null, incidentDescription: null, incidentResolution: "Yes", incidentRadius: null};
 			var incidentAttributesInfo = new Stateful(emptyAttributesInfo);
 			var updateButton = registry.byId("updateButton");
 			function bindObjectForm(object, form){
@@ -348,11 +366,13 @@
 						outageGL.remove(selectedFeature);
 						waterOutageLayer.refresh();
 						selectedFeature = null;
+						emptyModel(incidentAttributesInfo, emptyAttributesInfo);
 						},function(error){  
 						console.log("Error at ApplyEdit in ESRI js API");}
 						);}
 					if (updateAction.value == "Yes"){
 					selectedFeature.attributes.incidentResolution = "Yes";
+					selectedFeature.attributes.editorLogin = incidentAttributes.editorLogin;
 					waterOutageLayer.applyEdits(null, [selectedFeature], null, function(addResults,updateResults,deleteResults) {  
 						//console.log("Object Updated; ObjectId = " + updateResults[0].objectId);
 						outageGL.remove(selectedFeature);
@@ -367,6 +387,7 @@
 			on(updateForm, 'submit', function(evt){
 				evt.preventDefault(); 
 				evt.stopPropagation();
+				incidentAttributesInfo.editorLogin = incidentAttributes.editorLogin;
 				sendMail(incidentAttributesInfo, "updateResponseMessage");
 			});
 			//add search widget and restrict search to pasadena
@@ -455,10 +476,16 @@
 				</tr>
 				<tr>
 					<td><label for="recipientList">Recipient List:</label></td>
-					<td><select name="recipientList" id="recipientList" style="width: 8em;" data-dojo-type="dijit/form/Select">
+					<td><select name="recipientList" id="recipientList" style="width:8em;" data-dojo-type="dijit/form/Select">
 							<option value="Short List">Short List</option>
 							<option value="Long List" selected="selected">Long List</option>
 						</select>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="editorLogin">Editor Login:</label></td>
+					<td><input type="text" name="editorLogin" id="editorLogin" value=""
+						data-dojo-type="dijit/form/TextBox" style="width:8em;" readOnly="readOnly"/>
 					</td>
 				</tr>
 				<tr>
@@ -508,6 +535,12 @@
 				<tr>
 					<td><label for="recipientListInfo">Recipient List:</label></td>
 					<td><input type="text" name="recipientList" id="recipientListInfo"
+						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
+					</td>
+				</tr>
+				<tr>
+					<td><label for="editorLoginInfo">Editor Login:</label></td>
+					<td><input type="text" name="editorLogin" id="editorLoginInfo"
 						data-dojo-type="dijit/form/TextBox" style="width: 12em;" readOnly="readOnly"/>
 					</td>
 				</tr>
